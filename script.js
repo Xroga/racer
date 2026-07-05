@@ -1,0 +1,438 @@
+on
+{
+  "html": "<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subway Tunnel Racer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        #gameContainer {
+            position: relative;
+            width: 400px;
+            max-width: 100%;
+            border: 3px solid #e94560;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 0 30px rgba(233, 69, 96, 0.3);
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: auto;
+            background: #2d2d44;
+            cursor: default;
+        }
+        #uiOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            pointer-events: none;
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        }
+        #uiOverlay.active {
+            pointer-events: auto;
+        }
+        #uiOverlay h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            letter-spacing: 2px;
+        }
+        #uiOverlay p {
+            font-size: 1.2rem;
+            margin-bottom: 20px;
+            opacity: 0.9;
+        }
+        #uiOverlay button {
+            pointer-events: auto;
+            padding: 12px 30px;
+            font-size: 1.1rem;
+            background: #e94560;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.2s, background 0.2s;
+            font-weight: bold;
+            letter-spacing: 1px;
+        }
+        #uiOverlay button:hover {
+            transform: scale(1.05);
+            background: #ff6b81;
+        }
+        #scoreDisplay {
+            position: absolute;
+            top: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            font-size: 1.5rem;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            z-index: 10;
+            background: rgba(0,0,0,0.5);
+            padding: 5px 20px;
+            border-radius: 20px;
+            letter-spacing: 1px;
+        }
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="400" height="600"></canvas>
+        <div id="scoreDisplay">Score: 0</div>
+        <div id="uiOverlay" class="active">
+            <h1>🏆 Tunnel Racer</h1>
+            <p>Dodge the traffic! Left/Right arrows</p>
+            <button id="startBtn">▶ START GAME</button>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================
+        // Save as: index.html  —  Subway Tunnel Racer (Complete)
+        // ============================================================
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const uiOverlay = document.getElementById('uiOverlay');
+        const startBtn = document.getElementById('startBtn');
+
+        // --- Game Constants ---
+        const CANVAS_W = 400;
+        const CANVAS_H = 600;
+        const LANE_COUNT = 3;
+        const LANE_W = CANVAS_W / LANE_COUNT;
+        const ROAD_LEFT = 0;
+        const ROAD_RIGHT = CANVAS_W;
+
+        // Player car
+        const PLAYER_W = 40;
+        const PLAYER_H = 70;
+        const PLAYER_COLOR = '#2196F3';
+
+        // Enemy car
+        const ENEMY_W = 45;
+        const ENEMY_H = 80;
+        const ENEMY_COLORS = ['#FFC107', '#9E9E9E'];
+
+        // --- Game State ---
+        let gameState = 'start';
+        let player = {
+            x: 0,
+            y: CANVAS_H - 100,
+            lane: 1,
+            w: PLAYER_W,
+            h: PLAYER_H
+        };
+        let enemies = [];
+        let score = 0;
+        let frameCount = 0;
+        let spawnTimer = 0;
+        const SPAWN_INTERVAL = 90;
+        let enemySpeed = 3;
+        let animationId = null;
+
+        // Road markings animation
+        let roadOffset = 0;
+        const DASH_LENGTH = 40;
+        const DASH_GAP = 30;
+        const DASH_SPEED = 4;
+
+        // Speed scaling
+        let speedTimer = 0;
+        const SPEED_INTERVAL = 600; // 10 seconds at 60fps
+
+        // --- Helper Functions ---
+        function getLaneCenterX(lane) {
+            return lane * LANE_W + LANE_W / 2;
+        }
+
+        function initGame() {
+            player.lane = 1;
+            player.x = getLaneCenterX(1) - PLAYER_W / 2;
+            player.y = CANVAS_H - 100;
+
+            enemies = [];
+            score = 0;
+            frameCount = 0;
+            spawnTimer = 0;
+            enemySpeed = 3;
+            roadOffset = 0;
+            speedTimer = 0;
+
+            updateScoreDisplay();
+        }
+
+        function updateScoreDisplay() {
+            scoreDisplay.textContent = `Score: ${score}`;
+        }
+
+        // --- Drawing Functions ---
+        function drawRoad() {
+            ctx.fillStyle = '#2d2d44';
+            ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 3;
+            ctx.setLineDash([DASH_LENGTH, DASH_GAP]);
+
+            for (let i = 1; i < LANE_COUNT; i++) {
+                const x = i * LANE_W;
+                ctx.beginPath();
+                ctx.moveTo(x, roadOffset);
+                ctx.lineTo(x, CANVAS_H + roadOffset);
+                ctx.stroke();
+            }
+
+            ctx.setLineDash([]);
+
+            ctx.strokeStyle = '#555';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(0, CANVAS_H);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(CANVAS_W, 0);
+            ctx.lineTo(CANVAS_W, CANVAS_H);
+            ctx.stroke();
+        }
+
+        function drawPlayer() {
+            ctx.fillStyle = PLAYER_COLOR;
+            ctx.fillRect(player.x, player.y, player.w, player.h);
+
+            ctx.fillStyle = '#90CAF9';
+            ctx.fillRect(player.x + 5, player.y + 10, player.w - 10, 15);
+
+            ctx.fillStyle = '#90CAF9';
+            ctx.fillRect(player.x + 5, player.y + player.h - 25, player.w - 10, 12);
+
+            ctx.fillStyle = '#333';
+            ctx.fillRect(player.x - 4, player.y + 10, 4, 15);
+            ctx.fillRect(player.x + player.w, player.y + 10, 4, 15);
+            ctx.fillRect(player.x - 4, player.y + player.h - 25, 4, 15);
+            ctx.fillRect(player.x + player.w, player.y + player.h - 25, 4, 15);
+        }
+
+        function drawEnemies() {
+            for (const enemy of enemies) {
+                ctx.fillStyle = enemy.color;
+                ctx.fillRect(enemy.x, enemy.y, enemy.w, enemy.h);
+
+                ctx.fillStyle = '#B0BEC5';
+                ctx.fillRect(enemy.x + 5, enemy.y + 10, enemy.w - 10, 15);
+
+                ctx.fillStyle = '#B0BEC5';
+                ctx.fillRect(enemy.x + 5, enemy.y + enemy.h - 25, enemy.w - 10, 12);
+
+                ctx.fillStyle = '#333';
+                ctx.fillRect(enemy.x - 4, enemy.y + 10, 4, 15);
+                ctx.fillRect(enemy.x + enemy.w, enemy.y + 10, 4, 15);
+                ctx.fillRect(enemy.x - 4, enemy.y + enemy.h - 25, 4, 15);
+                ctx.fillRect(enemy.x + enemy.w, enemy.y + enemy.h - 25, 4, 15);
+            }
+        }
+
+        function renderGame() {
+            drawRoad();
+            drawEnemies();
+            drawPlayer();
+        }
+
+        // --- Game Logic ---
+        function movePlayer(direction) {
+            if (gameState !== 'playing') return;
+
+            if (direction === 'left' && player.lane > 0) {
+                player.lane--;
+            } else if (direction === 'right' && player.lane < LANE_COUNT - 1) {
+                player.lane++;
+            }
+            player.x = getLaneCenterX(player.lane) - PLAYER_W / 2;
+        }
+
+        function spawnObstacle() {
+            const lane = Math.floor(Math.random() * LANE_COUNT);
+            const color = ENEMY_COLORS[Math.floor(Math.random() * ENEMY_COLORS.length)];
+            enemies.push({
+                x: getLaneCenterX(lane) - ENEMY_W / 2,
+                y: -ENEMY_H,
+                w: ENEMY_W,
+                h: ENEMY_H,
+                lane: lane,
+                color: color
+            });
+        }
+
+        function updateGame() {
+            if (gameState !== 'playing') return;
+
+            frameCount++;
+            spawnTimer++;
+            speedTimer++;
+
+            // Speed scaling every 10 seconds
+            if (speedTimer >= SPEED_INTERVAL) {
+                enemySpeed += 0.5;
+                speedTimer = 0;
+            }
+
+            // Spawn enemies
+            if (spawnTimer >= SPAWN_INTERVAL) {
+                spawnObstacle();
+                spawnTimer = 0;
+            }
+
+            // Move enemies down
+            for (const enemy of enemies) {
+                enemy.y += enemySpeed;
+            }
+
+            // Remove off-screen enemies
+            enemies = enemies.filter(enemy => enemy.y < CANVAS_H + 50);
+
+            // Increase score
+            score++;
+            updateScoreDisplay();
+
+            // Animate road markings
+            roadOffset += DASH_SPEED;
+            if (roadOffset > DASH_LENGTH + DASH_GAP) {
+                roadOffset -= (DASH_LENGTH + DASH_GAP);
+            }
+
+            // Check collisions
+            checkCollisions();
+        }
+
+        function checkCollisions() {
+            for (const enemy of enemies) {
+                if (player.x < enemy.x + enemy.w &&
+                    player.x + player.w > enemy.x &&
+                    player.y < enemy.y + enemy.h &&
+                    player.y + player.h > enemy.y) {
+                    gameOver();
+                    return;
+                }
+            }
+        }
+
+        function gameOver() {
+            gameState = 'gameover';
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            showGameOverScreen();
+        }
+
+        function showGameOverScreen() {
+            uiOverlay.classList.remove('hidden');
+            uiOverlay.innerHTML = `
+                <h1>💥 GAME OVER</h1>
+                <p>Final Score: ${score}</p>
+                <button id="restartBtn">🔄 PLAY AGAIN</button>
+            `;
+            document.getElementById('restartBtn').addEventListener('click', startGame);
+        }
+
+        function showStartScreen() {
+            uiOverlay.classList.remove('hidden');
+            uiOverlay.innerHTML = `
+                <h1>🏆 Tunnel Racer</h1>
+                <p>Dodge the traffic! Left/Right arrows</p>
+                <button id="startBtn">▶ START GAME</button>
+            `;
+            document.getElementById('startBtn').addEventListener('click', startGame);
+        }
+
+        function startGame() {
+            uiOverlay.classList.add('hidden');
+            initGame();
+            gameState = 'playing';
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
+            gameLoop();
+        }
+
+        // --- Game Loop ---
+        function gameLoop() {
+            if (gameState === 'playing') {
+                updateGame();
+                renderGame();
+                animationId = requestAnimationFrame(gameLoop);
+            }
+        }
+
+        // --- Event Listeners ---
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                movePlayer('left');
+            } else if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                movePlayer('right');
+            } else if (e.key === ' ' || e.key === 'Space') {
+                e.preventDefault();
+                if (gameState === 'start' || gameState === 'gameover') {
+                    startGame();
+                }
+            }
+        });
+
+        // Touch support for mobile
+        let touchStartX = 0;
+        canvas.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+        });
+        canvas.addEventListener('touchend', (e) => {
+            const touchEndX = e.changedTouches[0].clientX;
+            const diff = touchEndX - touchStartX;
+            if (Math.abs(diff) > 30) {
+                if (diff > 0) {
+                    movePlayer('right');
+                } else {
+                    movePlayer('left');
+                }
+            }
+        });
+
+        // --- Initial Setup ---
+        initGame();
+        renderGame();
+        showStartScreen();
+
+        console.log('🏎️ Subway Tunnel Racer loaded! Press START or SPACE to play.');
+    </script>
+</body>
+</html>",
+  "css": "",
+  "js": ""
+}
